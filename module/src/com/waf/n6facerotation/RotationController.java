@@ -117,8 +117,13 @@ public final class RotationController implements SensorEventListener {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     RotationController c = instance;
-                    if (c != null && c.displayRotation == p.thisObject && c.allowed() && c.target >= 0) {
-                        p.setResult(c.target);
+                    if (c != null && c.displayRotation == p.thisObject && c.allowed()) {
+                        if (c.target >= 0) p.setResult(c.target);
+                        else if (XposedHelpers.getIntField(p.thisObject, "mUserRotationMode") == 1) {
+                            // Losing a face must not restore the lock from before the face-driven turn.
+                            // Read the live mode so enabling auto-rotate releases this hold immediately.
+                            p.setResult(XposedHelpers.getIntField(p.thisObject, "mRotation"));
+                        }
                     }
                 } catch (Throwable error) { logError("rotation policy", error); }
             }
@@ -138,8 +143,8 @@ public final class RotationController implements SensorEventListener {
                 });
             }
         });
-        Log.i(TAG, "0.4.7 independent rotation hooks installed");
-        XposedBridge.log("N6FaceRotation 0.4.7 independent rotation hooks installed");
+        Log.i(TAG, "0.4.8 independent rotation hooks installed");
+        XposedBridge.log("N6FaceRotation 0.4.8 independent rotation hooks installed");
     }
 
     private RotationController(Object rotation) {
@@ -176,7 +181,7 @@ public final class RotationController implements SensorEventListener {
             @Override public void onReceive(Context c, Intent i) {
                 String snapshot;
                 synchronized (windowLock) {
-                    snapshot = "0.4.7 enabled=" + config.enabled + " global=" + config.all + " available=" + available
+                    snapshot = "0.4.8 enabled=" + config.enabled + " global=" + config.all + " available=" + available
                             + " monitoring=" + monitoring + " userUnlocked=" + users.isUserUnlocked()
                             + " interactive=" + power.isInteractive() + " keyguard=" + XposedHelpers.callMethod(service, "isKeyguardLocked")
                             + " package=" + focusedPackage() + " target=" + target + " hardware=" + lastHardware;
@@ -349,7 +354,7 @@ public final class RotationController implements SensorEventListener {
 
     private void finish(Request current, Integer angle, String reason) {
         if (current == null || current != request) return;
-        // Without a face, let the original policy honor the current system rotation lock.
+        // Without a face, the policy hook holds the current screen only while auto-rotate is off.
         int result = angle == null ? -1 : ((angle + 45) / 90) % 4;
         cancelRequest();
         try {
