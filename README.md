@@ -2,6 +2,8 @@
 
 <img src="docs/assets/launcher-icon.svg" width="112" alt="智感旋转图标">
 
+**[下载安装包 v0.4.7](https://github.com/FZ997616100/n6-face-rotation/releases/download/v0.4.7/n6-face-rotation-v0.4.7.apk)** · [版本发布页](https://github.com/FZ997616100/n6-face-rotation/releases/tag/v0.4.7)
+
 在手机转动时，短时调用 OPPO 原生 AON 低功耗人脸方向识别，让屏幕方向适应你与手机的相对姿势。
 
 **这是一个带设置界面的 LSPosed 模块 APK，需要 Root 和 LSPosed。单独安装到普通未修改的手机上不会生效。**
@@ -20,7 +22,7 @@
 
 ## 安装和设置
 
-1. 安装构建得到的 APK，在 LSPosed 中启用“智感旋转”。
+1. 下载并安装发布页中的 APK（也可自行构建），在 LSPosed 中启用“智感旋转”。
 2. 作用域选择 **系统框架** 和 **AONService（com.aiunit.aon）**，然后重启手机。
 3. 打开智感旋转，开启总开关；选择“全局”或勾选需要生效的应用。
 
