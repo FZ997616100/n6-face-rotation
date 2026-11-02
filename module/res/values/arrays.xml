@@ -1,0 +1,6 @@
+<resources>
+    <string-array name="xposed_scope">
+        <item>android</item>
+        <item>com.aiunit.aon</item>
+    </string-array>
+</resources>
