@@ -38,7 +38,7 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class SettingsActivity extends Activity {
-    private static final String ABOUT = "������ʽ\n�����ҽ�������ȫ�ֻ���ѡӦ���ڼ����ֻ�����仯��ת���ȶ����ʱ���� OPPO ԭ�� AON ��������ʶ��\n\n��ת����\n����������������ֻ��ķ��������Ļ��������ϵͳ�Զ���ת���ء�\n������ʶ��ʧ�ܣ�����ϵͳԭ�й����Զ���ת����������ת���������ص�ǰϵͳ��������\n\nӦ�÷�Χ\n��ȫ�֡��Ե�ǰ�û���Ӧ����Ч������ѡӦ�á�ֻ�ڹ�ѡ��Ӧ������Ч���л�ģʽ�ᱣ����ѡ���ر��ܿ��ؼ�ͣ�ñ�ģ�顣\n\n���÷���\n��Ҫ Root �� LSPosed����װ APK���� LSPosed ���ñ�ģ�飬������ѡ��ϵͳ��ܡ��͡�AONService����Ȼ����������Ҫ���Ƶ�Ӧ���ڱ�Ӧ����ѡ������������� LSPosed ������\n\n���û���\nĿǰ��֤����Ϊ OPPO Find N6��ColorOS 17���������͡�ROM ��ϵͳ��������Ҫ������֤��\n\n��������˽\n����ʶ��ĵȴ�����Լ 0.8 �룬��ǰ�յ���Ч�������ǰ������ԭ��Ӳ���رտ������ӳ١��������������뿪��ѡӦ��ʱֹͣ��ģ�������ȡ����ǰ������δʵ���ع��ġ�\nӦ��ѡ�񱣴��ڱ�������ģ�鲻������ϴ�����ͼ��������־���¼�ǶȺͼ��״̬��Root ��ϼ�¼���ܰ���ǰ̨Ӧ�ð�����";
+    private static final String ABOUT = "工作方式\n亮屏且解锁后，在全局或所选应用内监听手机方向变化。转动稳定后短时请求 OPPO 原生 AON 人脸方向识别。\n\n旋转规则\n有脸：按人脸相对手机的方向调整屏幕，优先于系统自动旋转开关。\n无脸或识别失败：交回系统原有规则。自动旋转开则正常旋转，关则遵守当前系统锁定方向。\n\n应用范围\n“全局”对当前用户的应用生效；“所选应用”只在勾选的应用内生效。切换模式会保留勾选。关闭总开关即停用本模块。\n\n启用方法\n需要 Root 和 LSPosed。安装 APK，在 LSPosed 启用本模块，作用域选择“系统框架”和“AONService”，然后重启。需要控制的应用在本应用内选择，无需逐个加入 LSPosed 作用域。\n\n适用环境\n目前验证环境为 OPPO Find N6、ColorOS 17。其他机型、ROM 或系统升级后需要重新验证。\n\n功耗与隐私\n正常识别的等待窗口约 0.8 秒，提前收到有效结果会提前结束；原生硬件关闭可能有延迟。锁屏、关屏或离开所选应用时停止本模块监听并取消当前请求。尚未实测电池功耗。\n应用选择保存在本机，本模块不保存或上传人脸图像。运行日志会记录角度和检测状态，Root 诊断记录可能包含前台应用包名。";
     private final ArrayList<App> apps = new ArrayList<>();
     private final ArrayList<App> visibleApps = new ArrayList<>();
     private final LruCache<String, Drawable> icons = new LruCache<>(48);
@@ -68,16 +68,16 @@ public final class SettingsActivity extends Activity {
         });
         setContentView(page);
 
-        TextView title = text("�Ǹ���ת", 28, Color.rgb(25, 30, 38));
+        TextView title = text("智感旋转", 28, Color.rgb(25, 30, 38));
         title.setTypeface(null, Typeface.BOLD);
         title.setPadding(0, dp(24), 0, dp(8));
         page.addView(title);
-        TextView description = text("ת���ֻ�ʱ����ʶ����������\n����������ת��������ѭϵͳ����", 14, Color.rgb(100, 106, 115));
+        TextView description = text("转动手机时短暂识别人脸方向\n有脸优先旋转，无脸遵循系统开关", 14, Color.rgb(100, 106, 115));
         description.setPadding(0, 0, 0, dp(20));
         page.addView(description);
 
         Switch enabled = new Switch(this);
-        enabled.setText("�����Ǹ���ת");
+        enabled.setText("启用智感旋转");
         enabled.setTextSize(17);
         enabled.setMinHeight(dp(56));
         enabled.setChecked(prefs.getBoolean("enabled", false));
@@ -91,17 +91,17 @@ public final class SettingsActivity extends Activity {
         scope.setOrientation(LinearLayout.HORIZONTAL);
         RadioButton selectedScope = new RadioButton(this);
         selectedScope.setId(View.generateViewId());
-        selectedScope.setText("��ѡӦ��");
+        selectedScope.setText("所选应用");
         RadioButton allScope = new RadioButton(this);
         allScope.setId(View.generateViewId());
-        allScope.setText("ȫ��");
+        allScope.setText("全局");
         scope.addView(selectedScope, new RadioGroup.LayoutParams(0, dp(52), 1));
         scope.addView(allScope, new RadioGroup.LayoutParams(0, dp(52), 1));
         boolean scopeAll = prefs.getBoolean("scope_all", false);
         scope.check(scopeAll ? allScope.getId() : selectedScope.getId());
         page.addView(scope, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView help = text("������ʹ��˵��", 14, Color.rgb(0, 119, 104));
+        TextView help = text("功能与使用说明", 14, Color.rgb(0, 119, 104));
         help.setMinHeight(dp(44));
         help.setGravity(Gravity.CENTER_VERTICAL);
         help.setOnClickListener(view -> {
@@ -109,8 +109,8 @@ public final class SettingsActivity extends Activity {
             body.setPadding(dp(24), dp(8), dp(24), dp(16));
             ScrollView content = new ScrollView(this);
             content.addView(body);
-            new AlertDialog.Builder(this).setTitle("������ʹ��˵��")
-                    .setView(content).setPositiveButton("֪����", null).show();
+            new AlertDialog.Builder(this).setTitle("功能与使用说明")
+                    .setView(content).setPositiveButton("知道了", null).show();
         });
         page.addView(help, new LinearLayout.LayoutParams(-1, -2));
 
@@ -123,7 +123,7 @@ public final class SettingsActivity extends Activity {
         LinearLayout heading = new LinearLayout(this);
         heading.setGravity(Gravity.CENTER_VERTICAL);
         heading.setPadding(0, dp(22), 0, dp(10));
-        TextView choose = text("ѡ��Ӧ��", 18, Color.rgb(25, 30, 38));
+        TextView choose = text("选择应用", 18, Color.rgb(25, 30, 38));
         choose.setTypeface(null, Typeface.BOLD);
         heading.addView(choose, new LinearLayout.LayoutParams(0, -2, 1));
         count = text("", 14, Color.rgb(100, 106, 115));
@@ -133,7 +133,7 @@ public final class SettingsActivity extends Activity {
 
         search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("����Ӧ��");
+        search.setHint("搜索应用");
         search.setTextSize(16);
         search.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
         search.setPadding(dp(12), dp(8), dp(12), dp(8));
@@ -144,7 +144,7 @@ public final class SettingsActivity extends Activity {
             @Override public void afterTextChanged(Editable value) {}
         });
 
-        empty = text("���ڼ���Ӧ�á�", 15, Color.rgb(100, 106, 115));
+        empty = text("正在加载应用…", 15, Color.rgb(100, 106, 115));
         empty.setGravity(Gravity.CENTER);
         empty.setPadding(0, dp(24), 0, dp(24));
         appSelection.addView(empty, new LinearLayout.LayoutParams(-1, -2));
@@ -212,7 +212,7 @@ public final class SettingsActivity extends Activity {
             runOnUiThread(() -> {
                 if (closed) return;
                 loading = false;
-                empty.setText("Ӧ���б�����ʧ�ܣ������´�");
+                empty.setText("应用列表加载失败，请重新打开");
             });
         }
     }
@@ -225,7 +225,7 @@ public final class SettingsActivity extends Activity {
             if (app.label.toLowerCase(Locale.ROOT).contains(query)
                     || app.packageName.toLowerCase(Locale.ROOT).contains(query)) visibleApps.add(app);
         }
-        empty.setText(loading ? "���ڼ���Ӧ�á�" : query.isEmpty() ? "���޿�ѡ���Ӧ��" : "δ�ҵ�ƥ���Ӧ��");
+        empty.setText(loading ? "正在加载应用…" : query.isEmpty() ? "暂无可选择的应用" : "未找到匹配的应用");
         adapter.notifyDataSetChanged();
     }
 
@@ -233,7 +233,7 @@ public final class SettingsActivity extends Activity {
         getContentResolver().notifyChange(ConfigProvider.CONFIG_URI, null);
     }
 
-    private void updateCount() { count.setText("��ѡ " + selected.size() + " ��"); }
+    private void updateCount() { count.setText("已选 " + selected.size() + " 个"); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private TextView text(String value, int size, int color) {
         TextView view = new TextView(this);
@@ -297,7 +297,7 @@ public final class SettingsActivity extends Activity {
             ((ImageView) row.getChildAt(0)).setImageDrawable(icon);
             ((TextView) row.getChildAt(1)).setText(app.label);
             ((CheckBox) row.getChildAt(2)).setChecked(selected.contains(app.packageName));
-            row.setContentDescription(app.label + (selected.contains(app.packageName) ? "����ѡ��" : "��δѡ��"));
+            row.setContentDescription(app.label + (selected.contains(app.packageName) ? "，已选择" : "，未选择"));
             return row;
         }
     }
