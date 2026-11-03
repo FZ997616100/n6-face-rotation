@@ -20,6 +20,7 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.PowerManager;
 import android.os.RemoteException;
+import android.os.SystemClock;
 import android.os.UserManager;
 import android.util.Log;
 import java.util.Arrays;
@@ -44,27 +45,28 @@ public final class RotationController implements SensorEventListener {
     private Sensor orientation;
     private PowerManager power;
     private UserManager users;
-    private volatile Config config = new Config(false, false, new HashSet<String>());
+    private volatile Config config = new Config(false, false, new HashSet<String>(), ConfigProvider.DEFAULT_WAIT_MS);
     private volatile int target = -1;
+    private int manualUserRotation = -1;
     private volatile boolean available;
     private int appOrientation;
     private long orientationGeneration;
     private boolean monitoring;
     private int lastHardware = -1;
-    private int pendingHardware = -1;
     private boolean bound;
     private IBinder aon;
     private Request request;
     private String lastGate;
     private String lastPackage;
-    private final Runnable settle = () -> beginRequest(pendingHardware, null);
-    private final Runnable expire = () -> finish(request, null, "timeout");
+    private final Runnable expire = this::expireRequest;
 
     private static final class Config {
         final boolean enabled, all;
         final Set<String> packages;
-        Config(boolean enabled, boolean all, Set<String> packages) {
+        final int waitMs;
+        Config(boolean enabled, boolean all, Set<String> packages, int waitMs) {
             this.enabled = enabled; this.all = all; this.packages = packages;
+            this.waitMs = ConfigProvider.normalizeWaitMs(waitMs);
         }
     }
 
@@ -73,6 +75,10 @@ public final class RotationController implements SensorEventListener {
         // The boot image may inline this policy into updateRotationUnchecked.
         java.lang.reflect.Method deopt = XposedBridge.class.getMethod("deoptimizeMethod", java.lang.reflect.Member.class);
         deopt.invoke(null, rotation.getDeclaredMethod("updateRotationUnchecked", boolean.class));
+        deopt.invoke(null, rotation.getDeclaredMethod("freezeRotation", int.class, String.class));
+        deopt.invoke(null, rotation.getDeclaredMethod("setRotationAtAngleIfAllowed", int.class, String.class));
+        deopt.invoke(null, XposedHelpers.findClass("com.android.server.wm.WindowManagerService", loader)
+                .getDeclaredMethod("setRotationAtAngleIfAllowed", int.class, String.class));
         Class<?> userController = XposedHelpers.findClass("com.android.server.am.UserController", loader);
         deopt.invoke(null, userController.getDeclaredMethod("handleMessage", android.os.Message.class));
         Class<?> activity = XposedHelpers.findClass("com.android.server.wm.ActivityRecord", loader);
@@ -116,6 +122,21 @@ public final class RotationController implements SensorEventListener {
                 } catch (Throwable error) { logError("controller construction", error); }
             }
         });
+        XposedHelpers.findAndHookMethod(rotation, "setUserRotation", int.class, int.class, String.class, new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                try {
+                    // The unfolded Launcher taskbar supplies a three-frame click stack instead of a label.
+                    RotationController c = instance;
+                    if (p.hasThrowable() || c == null || c.displayRotation != p.thisObject
+                            || (Integer) p.args[0] != 1
+                            || !("RotationButtonController#onRotateSuggestionClick".equals(p.args[2])
+                            || (p.args[2] instanceof String && ((String) p.args[2]).matches(
+                                    "com\\.android\\.systemui\\.shared\\.rotation\\.RotationButtonController\\.a:\\d+ za\\.b\\.onClick:\\d+ android\\.view\\.View\\.performClick:\\d+\\s*")))) return;
+                    int chosen = (Integer) p.args[1];
+                    if (chosen >= 0 && chosen < 4) c.acceptManualRotation(chosen);
+                } catch (Throwable error) { logError("manual rotation", error); }
+            }
+        });
         XposedHelpers.findAndHookMethod(rotation, "rotationForOrientation", int.class, int.class, new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
@@ -126,10 +147,20 @@ public final class RotationController implements SensorEventListener {
                         c.appOrientation = requested;
                         c.orientationGeneration++;
                         c.target = -1;
+                        c.manualUserRotation = -1;
                         // Let the app's new orientation establish a native baseline, including fullscreen exit.
                         return;
                     }
                     if (c.allowed() && allowsFaceRotation(requested)) {
+                        if (c.manualUserRotation >= 0) {
+                            int mode = XposedHelpers.getIntField(p.thisObject, "mUserRotationMode");
+                            if (mode != 1) c.manualUserRotation = -1;
+                            else if (XposedHelpers.getIntField(p.thisObject, "mUserRotation") == c.manualUserRotation) {
+                                // The setting is asynchronous; keep yielding until the chosen rotation is applied.
+                                if (XposedHelpers.getIntField(p.thisObject, "mRotation") != c.manualUserRotation) return;
+                                c.manualUserRotation = -1;
+                            }
+                        }
                         if (c.target >= 0) p.setResult(c.target);
                         else if (XposedHelpers.getIntField(p.thisObject, "mUserRotationMode") == 1) {
                             // Losing a face must not restore the lock from before the face-driven turn.
@@ -155,8 +186,27 @@ public final class RotationController implements SensorEventListener {
                 });
             }
         });
-        Log.i(TAG, "0.4.9 independent rotation hooks installed");
-        XposedBridge.log("N6FaceRotation 0.4.9 independent rotation hooks installed");
+        Log.i(TAG, "0.4.12 independent rotation hooks installed");
+        XposedBridge.log("N6FaceRotation 0.4.12 independent rotation hooks installed");
+    }
+
+    private void acceptManualRotation(int chosen) {
+        final long generation;
+        synchronized (windowLock) {
+            if (!allowed()) return;
+            target = -1;
+            manualUserRotation = chosen;
+            generation = ++orientationGeneration;
+        }
+        worker.post(() -> {
+            if (request != null && request.orientationGeneration < generation) cancelRequest();
+            synchronized (windowLock) {
+                if (orientationGeneration != generation || manualUserRotation != chosen) return;
+            }
+            // Selecting the already-saved lock angle need not produce a Settings notification.
+            Log.i(TAG, "manual rotation chosen=" + chosen);
+            applyRotation();
+        });
     }
 
     private RotationController(Object rotation) {
@@ -194,10 +244,12 @@ public final class RotationController implements SensorEventListener {
             @Override public void onReceive(Context c, Intent i) {
                 String snapshot;
                 synchronized (windowLock) {
-                    snapshot = "0.4.9 enabled=" + config.enabled + " global=" + config.all + " available=" + available
+                    snapshot = "0.4.12 enabled=" + config.enabled + " global=" + config.all + " waitMs=" + config.waitMs + " available=" + available
                             + " monitoring=" + monitoring + " userUnlocked=" + users.isUserUnlocked()
                             + " interactive=" + power.isInteractive() + " keyguard=" + XposedHelpers.callMethod(service, "isKeyguardLocked")
-                            + " package=" + focusedPackage() + " target=" + target + " hardware=" + lastHardware;
+                            + " package=" + focusedPackage() + " target=" + target + " manual=" + manualUserRotation + " hardware=" + lastHardware
+                            + " requestWaitMs=" + (request == null ? -1 : request.waitMs)
+                            + " remainingMs=" + (request == null ? -1 : Math.max(0L, request.deadline - SystemClock.uptimeMillis()));
                 }
                 setResultData(snapshot);
                 Log.i(TAG, "STATUS " + snapshot);
@@ -218,9 +270,13 @@ public final class RotationController implements SensorEventListener {
         if (!users.isUserUnlocked()) { refresh(); return; }
         try (Cursor cursor = context.getContentResolver().query(ConfigProvider.CONFIG_URI, null, null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) {
-                config = new Config(cursor.getInt(0) == 1, cursor.getInt(2) == 1,
-                        new HashSet<>(Arrays.asList(cursor.getString(1).split("\n"))));
-                Log.i(TAG, "config read enabled=" + config.enabled + " global=" + config.all);
+                int waitColumn = cursor.getColumnIndex("wait_ms");
+                Config next = new Config(cursor.getInt(0) == 1, cursor.getInt(2) == 1,
+                        new HashSet<>(Arrays.asList(cursor.getString(1).split("\n"))),
+                        waitColumn >= 0 ? cursor.getInt(waitColumn) : ConfigProvider.DEFAULT_WAIT_MS);
+                config = next;
+                Log.i(TAG, "config read enabled=" + config.enabled + " global=" + config.all
+                        + " waitMs=" + config.waitMs);
             }
         } catch (Throwable error) { logError("configuration read", error); }
         refresh();
@@ -265,7 +321,7 @@ public final class RotationController implements SensorEventListener {
             synchronized (windowLock) { packageName = focusedPackage(); }
             if (!java.util.Objects.equals(packageName, lastPackage)) {
                 lastPackage = packageName;
-                worker.removeCallbacks(settle);
+                synchronized (windowLock) { manualUserRotation = -1; }
                 cancelRequest();
             }
             boolean allow = allowedFromWorker();
@@ -282,7 +338,7 @@ public final class RotationController implements SensorEventListener {
                 monitoring = false;
                 lastHardware = -1;
                 target = -1;
-                worker.removeCallbacks(settle);
+                synchronized (windowLock) { manualUserRotation = -1; }
                 cancelRequest();
                 unbind();
                 if (wasActive) applyRotation();
@@ -298,12 +354,8 @@ public final class RotationController implements SensorEventListener {
         lastHardware = hardware;
         if (previous == -1) { Log.i(TAG, "orientation baseline=" + hardware); return; }
         if (!allowedFromWorker()) { refresh(); return; }
-        cancelRequest();
-        synchronized (windowLock) { target = XposedHelpers.getIntField(displayRotation, "mRotation"); }
-        pendingHardware = hardware;
-        worker.removeCallbacks(settle);
-        worker.postDelayed(settle, 150L);
         Log.i(TAG, "phone moved " + previous + "->" + hardware);
+        beginRequest(hardware, null);
     }
 
     @Override public void onAccuracyChanged(Sensor sensor, int accuracy) { }
@@ -314,17 +366,21 @@ public final class RotationController implements SensorEventListener {
             cancelRequest();
             synchronized (windowLock) {
                 if (!allowsFaceRotation(appOrientation)) { target = -1; return; }
+                manualUserRotation = -1;
                 target = XposedHelpers.getIntField(displayRotation, "mRotation");
-                request = new Request(hardware, focusedPackage(), orientationGeneration);
+                request = new Request(hardware, focusedPackage(), orientationGeneration, config.waitMs);
             }
             if (syntheticAngle != null) {
                 Request test = request;
                 worker.postDelayed(() -> finish(test, syntheticAngle >= 0 ? syntheticAngle : null, "synthetic"), 80L);
-            } else if (aon != null) startRequest();
-            else {
-                if (!bound) bound = context.bindService(new Intent().setComponent(new ComponentName("com.aiunit.aon", "com.aiunit.aon.AONService")), connection, Context.BIND_AUTO_CREATE);
-                if (!bound) finish(request, null, "bind-failed");
-                else worker.postDelayed(expire, 1800L);
+            } else {
+                worker.postDelayed(expire, Math.max(0L, request.deadline - SystemClock.uptimeMillis()));
+                if (aon != null) startRequest();
+                else {
+                    if (!bound) bound = context.bindService(new Intent().setComponent(new ComponentName("com.aiunit.aon", "com.aiunit.aon.AONService")), connection, Context.BIND_AUTO_CREATE);
+                    if (!bound) finish(request, null, "bind-failed");
+                    else if (SystemClock.uptimeMillis() >= request.deadline) finish(request, null, "timeout");
+                }
             }
         } catch (Throwable error) { logError("begin recognition", error); finish(request, null, "error"); }
     }
@@ -343,24 +399,37 @@ public final class RotationController implements SensorEventListener {
     private void startRequest() {
         Request current = request;
         if (current == null || current.registered) return;
-        worker.removeCallbacks(expire);
         if (!allowedFromWorker()) { refresh(); return; }
+        if (SystemClock.uptimeMillis() >= current.deadline) { finish(current, null, "timeout"); return; }
         try {
             int registration = serviceCall(aon, 5, current.listener);
             current.registered = registration == 0;
             if (!current.registered) { finish(current, null, "register=" + registration); return; }
+            if (SystemClock.uptimeMillis() >= current.deadline) { finish(current, null, "timeout"); return; }
             current.startAttempted = true;
             int start = serviceCall(aon, 3, null);
-            Log.i(TAG, "recognition start=" + start + " hardware=" + current.hardware + " window=800ms");
+            long remaining = current.deadline - SystemClock.uptimeMillis();
+            Log.i(TAG, "recognition start=" + start + " hardware=" + current.hardware
+                    + " waitMs=" + current.waitMs + " remainingMs=" + Math.max(0L, remaining));
+            if (remaining <= 0) { finish(current, null, "timeout"); return; }
             if (start != 0) { finish(current, null, "start=" + start); return; }
-            worker.postDelayed(expire, 800L);
+            worker.removeCallbacks(expire);
+            worker.postDelayed(expire, Math.max(0L, current.deadline - SystemClock.uptimeMillis()));
         } catch (Throwable error) { logError("AON start", error); finish(current, null, "start-error"); }
+    }
+
+    private void expireRequest() {
+        Request current = request;
+        if (current == null) return;
+        finish(current, null, "timeout");
     }
 
     private final class Request {
         final int hardware;
         final String packageName;
         final long orientationGeneration;
+        final int waitMs;
+        final long startedAt, deadline;
         boolean registered, startAttempted;
         final Binder listener = new Binder() {
             @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
@@ -377,13 +446,21 @@ public final class RotationController implements SensorEventListener {
                 return super.onTransact(code, data, reply, flags);
             }
         };
-        Request(int hardware, String packageName, long orientationGeneration) {
+        Request(int hardware, String packageName, long orientationGeneration, int waitMs) {
             this.hardware = hardware; this.packageName = packageName; this.orientationGeneration = orientationGeneration;
+            this.waitMs = waitMs;
+            startedAt = SystemClock.uptimeMillis();
+            deadline = startedAt + waitMs;
         }
     }
 
     private void finish(Request current, Integer angle, String reason) {
         if (current == null || current != request) return;
+        // Binder callbacks can reach the worker after the request budget has elapsed.
+        if ("face".equals(reason) && SystemClock.uptimeMillis() >= current.deadline) {
+            angle = null;
+            reason = "timeout";
+        }
         // Without a face, the policy hook holds the current screen only while auto-rotate is off.
         int result = angle == null ? -1 : ((angle + 45) / 90) % 4;
         cancelRequest();
@@ -394,7 +471,9 @@ public final class RotationController implements SensorEventListener {
                 if (current.orientationGeneration != orientationGeneration) return;
                 target = result;
             }
-            Log.i(TAG, "rotation decision reason=" + reason + " hardware=" + current.hardware + " face=" + angle + " target=" + target);
+            Log.i(TAG, "rotation decision reason=" + reason + " hardware=" + current.hardware + " face=" + angle
+                    + " target=" + target + " waitMs=" + current.waitMs
+                    + " elapsedMs=" + (SystemClock.uptimeMillis() - current.startedAt));
             applyRotation();
         } catch (Throwable error) { logError("rotation result", error); }
     }

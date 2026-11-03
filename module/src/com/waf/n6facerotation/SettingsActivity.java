@@ -38,7 +38,7 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class SettingsActivity extends Activity {
-    private static final String ABOUT = "工作方式\n亮屏且解锁后，在全局或所选应用内监听手机方向变化。转动稳定后短时请求 OPPO 原生 AON 人脸方向识别。\n\n旋转规则\n应用明确要求的横屏、竖屏或锁定方向优先，例如视频全屏及退出全屏；这些页面交由系统处理，不发起新的人脸识别。应用切换方向时先由系统完成切换，切换前的旧识别结果不会覆盖新方向。\n未限定方向的页面，有脸：按人脸相对手机的方向调整屏幕，优先于系统自动旋转开关。\n无脸或识别失败：系统自动旋转开启则交回系统正常旋转；关闭则保持此刻屏幕方向，不退回人脸旋转前的旧锁定方向。之后开启自动旋转会恢复系统判断。关闭模块、离开生效范围或锁屏后停止覆盖，恢复系统原有规则。\n\n应用范围\n“全局”对当前用户的应用生效；“所选应用”只在勾选的应用内生效。切换模式会保留勾选。关闭总开关即停用本模块。\n\n启用方法\n需要 Root 和 LSPosed。安装 APK，在 LSPosed 启用本模块，作用域选择“系统框架”和“AONService”，然后重启。需要控制的应用在本应用内选择，无需逐个加入 LSPosed 作用域。\n\n适用环境\n目前验证环境为 OPPO Find N6、ColorOS 17。其他机型、ROM 或系统升级后需要重新验证。\n\n功耗与隐私\n正常识别的等待窗口约 0.8 秒，提前收到有效结果会提前结束；原生硬件关闭可能有延迟。锁屏、关屏或离开所选应用时停止本模块监听并取消当前请求。尚未实测电池功耗。\n应用选择保存在本机，本模块不保存或上传人脸图像。运行日志会记录角度和检测状态，Root 诊断记录可能包含前台应用包名。";
+    private static final String ABOUT = "工作方式\n亮屏且解锁后，在全局或所选应用内监听手机方向变化。方向变化后立即请求 OPPO 原生 AON 人脸方向识别。\n\n旋转规则\n点击系统的旋转建议按钮时，优先采用这次手动选择，之前的人脸结果不会覆盖；之后再次转动手机可以重新识别。\n应用明确要求的横屏、竖屏或锁定方向优先，例如视频全屏及退出全屏；这些页面交由系统处理，不发起新的人脸识别。应用切换方向时先由系统完成切换，切换前的旧识别结果不会覆盖新方向。\n未限定方向的页面，有脸：按人脸相对手机的方向调整屏幕，优先于系统自动旋转开关。\n无脸或识别失败：系统自动旋转开启则交回系统正常旋转；关闭则保持此刻屏幕方向，不退回人脸旋转前的旧锁定方向。之后开启自动旋转会恢复系统判断。关闭模块、离开生效范围或锁屏后停止覆盖，恢复系统原有规则。\n\n应用范围\n“全局”对当前用户的应用生效；“所选应用”只在勾选的应用内生效。切换模式会保留勾选。关闭总开关即停用本模块。\n\n启用方法\n需要 Root 和 LSPosed。安装 APK，在 LSPosed 启用本模块，作用域选择“系统框架”和“AONService”，然后重启。需要控制的应用在本应用内选择，无需逐个加入 LSPosed 作用域。\n\n适用环境\n目前验证环境为 OPPO Find N6、ColorOS 17。其他机型、ROM 或系统升级后需要重新验证。\n\n功耗与隐私\n等待识别可选约 0.2、0.5、0.8 秒，默认 0.8 秒。单次预算从方向变化触发的请求开始计时，包含服务连接和启动；较短响应快，但更易漏掉暗处迟到的人脸结果。此设置不改变原生曝光。有有效结果会提前结束；原生硬件关闭可能有延迟。档位修改从下一次请求生效，不改变当前请求的预算。锁屏、关屏或离开所选应用时停止本模块监听并取消当前请求。尚未实测电池功耗。\n应用选择保存在本机，本模块不保存或上传人脸图像。运行日志会记录角度和检测状态，Root 诊断记录可能包含前台应用包名。";
     private final ArrayList<App> apps = new ArrayList<>();
     private final ArrayList<App> visibleApps = new ArrayList<>();
     private final LruCache<String, Drawable> icons = new LruCache<>(48);
@@ -86,6 +86,35 @@ public final class SettingsActivity extends Activity {
             changed();
         });
         page.addView(enabled, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView waitLabel = text("等待识别", 16, Color.rgb(25, 30, 38));
+        waitLabel.setPadding(0, dp(8), 0, 0);
+        page.addView(waitLabel, new LinearLayout.LayoutParams(-1, -2));
+        RadioGroup wait = new RadioGroup(this);
+        wait.setOrientation(LinearLayout.HORIZONTAL);
+        RadioButton waitShort = new RadioButton(this);
+        waitShort.setId(View.generateViewId());
+        waitShort.setText("约0.2秒");
+        RadioButton waitMedium = new RadioButton(this);
+        waitMedium.setId(View.generateViewId());
+        waitMedium.setText("约0.5秒");
+        RadioButton waitLong = new RadioButton(this);
+        waitLong.setId(View.generateViewId());
+        waitLong.setText("约0.8秒");
+        wait.addView(waitShort, new RadioGroup.LayoutParams(0, dp(48), 1));
+        wait.addView(waitMedium, new RadioGroup.LayoutParams(0, dp(48), 1));
+        wait.addView(waitLong, new RadioGroup.LayoutParams(0, dp(48), 1));
+        int waitMs = ConfigProvider.readWaitMs(prefs);
+        wait.check(waitMs == 200 ? waitShort.getId() : waitMs == 500 ? waitMedium.getId() : waitLong.getId());
+        wait.setOnCheckedChangeListener((group, checkedId) -> {
+            int chosen = checkedId == waitShort.getId() ? 200 : checkedId == waitMedium.getId() ? 500 : 800;
+            prefs.edit().putInt("wait_ms", chosen).apply();
+            changed();
+        });
+        page.addView(wait, new LinearLayout.LayoutParams(-1, -2));
+        TextView waitHelp = text("较短响应快，但更易漏掉暗处迟到结果；从下一次识别生效", 13, Color.rgb(100, 106, 115));
+        waitHelp.setPadding(0, 0, 0, dp(8));
+        page.addView(waitHelp, new LinearLayout.LayoutParams(-1, -2));
 
         RadioGroup scope = new RadioGroup(this);
         scope.setOrientation(LinearLayout.HORIZONTAL);

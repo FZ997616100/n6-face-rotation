@@ -52,7 +52,7 @@ public final class MainHook implements IXposedHookLoadPackage {
                 Context context = (Context) param.args[0];
                 try {
                     install(context.getClassLoader(), lp.processName);
-                    Log.i(TAG, "0.4.9 hooks installed process=" + lp.processName);
+                    Log.i(TAG, "0.4.12 hooks installed process=" + lp.processName);
                 } catch (Throwable error) {
                     Log.i(TAG, "hook installation failed " + error.getClass().getSimpleName());
                 }
