@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.pm.ActivityInfo;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.hardware.Sensor;
@@ -46,6 +47,8 @@ public final class RotationController implements SensorEventListener {
     private volatile Config config = new Config(false, false, new HashSet<String>());
     private volatile int target = -1;
     private volatile boolean available;
+    private int appOrientation;
+    private long orientationGeneration;
     private boolean monitoring;
     private int lastHardware = -1;
     private int pendingHardware = -1;
@@ -117,7 +120,16 @@ public final class RotationController implements SensorEventListener {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     RotationController c = instance;
-                    if (c != null && c.displayRotation == p.thisObject && c.allowed()) {
+                    if (c == null || c.displayRotation != p.thisObject) return;
+                    int requested = (Integer) p.args[0];
+                    if (c.appOrientation != requested) {
+                        c.appOrientation = requested;
+                        c.orientationGeneration++;
+                        c.target = -1;
+                        // Let the app's new orientation establish a native baseline, including fullscreen exit.
+                        return;
+                    }
+                    if (c.allowed() && allowsFaceRotation(requested)) {
                         if (c.target >= 0) p.setResult(c.target);
                         else if (XposedHelpers.getIntField(p.thisObject, "mUserRotationMode") == 1) {
                             // Losing a face must not restore the lock from before the face-driven turn.
@@ -143,12 +155,13 @@ public final class RotationController implements SensorEventListener {
                 });
             }
         });
-        Log.i(TAG, "0.4.8 independent rotation hooks installed");
-        XposedBridge.log("N6FaceRotation 0.4.8 independent rotation hooks installed");
+        Log.i(TAG, "0.4.9 independent rotation hooks installed");
+        XposedBridge.log("N6FaceRotation 0.4.9 independent rotation hooks installed");
     }
 
     private RotationController(Object rotation) {
         displayRotation = rotation;
+        appOrientation = XposedHelpers.getIntField(rotation, "mLastOrientation");
         display = XposedHelpers.getObjectField(rotation, "mDisplayContent");
         service = XposedHelpers.getObjectField(rotation, "mService");
         windowLock = XposedHelpers.getObjectField(rotation, "mLock");
@@ -181,7 +194,7 @@ public final class RotationController implements SensorEventListener {
             @Override public void onReceive(Context c, Intent i) {
                 String snapshot;
                 synchronized (windowLock) {
-                    snapshot = "0.4.8 enabled=" + config.enabled + " global=" + config.all + " available=" + available
+                    snapshot = "0.4.9 enabled=" + config.enabled + " global=" + config.all + " available=" + available
                             + " monitoring=" + monitoring + " userUnlocked=" + users.isUserUnlocked()
                             + " interactive=" + power.isInteractive() + " keyguard=" + XposedHelpers.callMethod(service, "isKeyguardLocked")
                             + " package=" + focusedPackage() + " target=" + target + " hardware=" + lastHardware;
@@ -229,6 +242,19 @@ public final class RotationController implements SensorEventListener {
 
     private boolean allowedFromWorker() {
         synchronized (windowLock) { return allowed(); }
+    }
+
+    private static boolean allowsFaceRotation(int requested) {
+        switch (requested) {
+            case ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED:
+            case ActivityInfo.SCREEN_ORIENTATION_USER:
+            case ActivityInfo.SCREEN_ORIENTATION_SENSOR:
+            case ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR:
+            case ActivityInfo.SCREEN_ORIENTATION_FULL_USER:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private void refresh() {
@@ -287,8 +313,9 @@ public final class RotationController implements SensorEventListener {
             if (hardware < 0 || hardware > 3 || !allowedFromWorker()) { refresh(); return; }
             cancelRequest();
             synchronized (windowLock) {
+                if (!allowsFaceRotation(appOrientation)) { target = -1; return; }
                 target = XposedHelpers.getIntField(displayRotation, "mRotation");
-                request = new Request(hardware, focusedPackage());
+                request = new Request(hardware, focusedPackage(), orientationGeneration);
             }
             if (syntheticAngle != null) {
                 Request test = request;
@@ -333,6 +360,7 @@ public final class RotationController implements SensorEventListener {
     private final class Request {
         final int hardware;
         final String packageName;
+        final long orientationGeneration;
         boolean registered, startAttempted;
         final Binder listener = new Binder() {
             @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
@@ -349,7 +377,9 @@ public final class RotationController implements SensorEventListener {
                 return super.onTransact(code, data, reply, flags);
             }
         };
-        Request(int hardware, String packageName) { this.hardware = hardware; this.packageName = packageName; }
+        Request(int hardware, String packageName, long orientationGeneration) {
+            this.hardware = hardware; this.packageName = packageName; this.orientationGeneration = orientationGeneration;
+        }
     }
 
     private void finish(Request current, Integer angle, String reason) {
@@ -361,8 +391,9 @@ public final class RotationController implements SensorEventListener {
             if (!allowedFromWorker()) { refresh(); return; }
             synchronized (windowLock) {
                 if (!java.util.Objects.equals(current.packageName, focusedPackage())) { worker.post(this::refresh); return; }
+                if (current.orientationGeneration != orientationGeneration) return;
+                target = result;
             }
-            target = result;
             Log.i(TAG, "rotation decision reason=" + reason + " hardware=" + current.hardware + " face=" + angle + " target=" + target);
             applyRotation();
         } catch (Throwable error) { logError("rotation result", error); }
