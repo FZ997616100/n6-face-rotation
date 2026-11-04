@@ -12,20 +12,22 @@
 python experimental/aon-lowlight/build.py --ndk "C:/Android/Sdk/ndk/28.2.13676358"
 ```
 
-也可用 `ANDROID_NDK_HOME` 或 `ANDROID_NDK_ROOT` 指定 NDK。`--output` 可指定产物目录；默认写入仓库的 `outputs/aon-lowlight/`。目标为 ARM64 Android API 35，使用 C++17，生成 `n6-aon-lowlight-experimental-v0.1.zip`。不保证 ZIP 的时间戳、压缩字节或跨 NDK 版本的二进制完全一致。
+也可用 `ANDROID_NDK_HOME` 或 `ANDROID_NDK_ROOT` 指定 NDK。`--output` 可指定产物目录；默认写入仓库的 `outputs/aon-lowlight/`。目标为 ARM64 Android API 35，使用 C++17，生成 `n6-aon-lowlight-experimental-v0.2.zip`。不保证 ZIP 的时间戳、压缩字节或跨 NDK 版本的二进制完全一致。
 
 ZIP 仅含 `module.prop`、`customize.sh`、`post-fs-data.sh` 和自编译的 `aon-profile-patcher`。不包含厂商 PB、厂商 native blob、设备日志、用户配置或签名密钥。
 
 ## 兼容校验与恢复
 
-安装脚本读取设备原有的两份 PB；只有 SHA256 同时匹配以下本机固件基线，才在模块目录生成副本。原 `/vendor` 文件不被覆写。
+首次安装时，安装脚本读取以下两份原厂 PB，核对 SHA256 后生成 32x 副本。覆盖安装时，如果当前看到的两份 PB 正好都是已验证的 32x 副本，v0.2 会直接复制它们，不再追加增益档。两条路径都校验输出的完整 SHA256。原 `/vendor` 文件不被覆写。
 
 | 设备原文件 | SHA256 |
 | --- | --- |
 | `/vendor/lib64/camera/swangoosefrontmain_3.pb` | `ede83ff01cf0f0991232c09944303b09547c17bcc1e018b4d23bf1bcd03cd16f` |
 | `/vendor/lib64/camera/swangoosefrontsub_4.pb` | `0858b8837c24d3453d0c44d71b620f91f2662a4732ab56212174be28240fc17d` |
 
-这两个文件哈希是安装兼容边界；脚本不另行检查型号或系统 build，也不能凭哈希匹配保证其他设备行为一致。补丁器另外验证原九行档位结构和值，保留原九行及未知字段，仅追加克隆行。
+补丁器还核对原九行档位结构，保留原字段，仅追加增益档。两份配置的哈希用于限制适配范围，其他设备即使哈希相同，也仍需实机验证。
+
+已测 32x 副本 SHA256 为主屏配置 `9ea078ad7626a3e438da6f1ae3d280856650052f762e0458395ea64db1ba9fdf`、内屏配置 `5fd547423c86534b1fd1086a58e646158dd247e7381d0df3fcadc87a0bb448dc`，只在安装阶段用于识别已有补丁。遇到原厂与已修改文件混用、未知或不可读文件时，安装会停止；新安装日志会显示两份实际哈希或 unreadable。旧版 v0.1 若在重装时报错，可直接安装 v0.2；若 v0.2 仍报错且已装旧版，可停用旧版并重启，再试一次。
 
 安装后须重启才能重新加载 DSP 配置。停用或卸载模块后也须重启才能恢复。每次开机在覆盖挂载前检查原 PB 哈希，若系统更新导致不匹配，会写入 `disable` 和 `skip_mount`，阻止继续挂载旧配置；安装时不匹配则直接拒绝。遇到拒绝时请勿删除或绕过校验。
 
@@ -33,4 +35,4 @@ ZIP 仅含 `module.prop`、`customize.sh`、`post-fs-data.sh` 和自编译的 `a
 
 本机曾观察到候选加载后的硬件编程迹象，用户主观反馈“有点用但一般”。I2C 编程记录不是独立寄存器 readback，也不是光学增益或识别率测量。没有同场、同条件的原 16x 对照，因此不能据此宣称识别率、暗光距离或稳定性提升已经证实。
 
-本目录保留已测 ZIP 所用的补丁器源码和相同模块脚本内容；构建入口只将本机固定路径改为可传入的官方 NDK 路径，并将产物写至独立输出目录。完整研究目录、厂商原件、设备记录和密钥不属于公开源码。
+v0.2 仅修改安装流程。已有硬件验证来自 v0.1，v0.2 的安装分支单独在本地验证。完整研究目录、厂商原件、设备记录和密钥不属于公开源码。

@@ -2,7 +2,7 @@
 
 <img src="docs/assets/launcher-icon.svg" width="112" alt="智感旋转图标">
 
-**[下载 v0.4.12 预发布 APK](https://github.com/FZ997616100/n6-face-rotation/releases/download/v0.4.12/n6-face-rotation-v0.4.12.apk)** · [版本发布页](https://github.com/FZ997616100/n6-face-rotation/releases/tag/v0.4.12)
+**[下载 v0.4.12 APK](https://github.com/FZ997616100/n6-face-rotation/releases/download/v0.4.12-r1/n6-face-rotation-v0.4.12.apk)** · [版本发布页](https://github.com/FZ997616100/n6-face-rotation/releases/tag/v0.4.12-r1)
 
 在手机转动时，短时调用 OPPO 原生 AON 低功耗人脸方向识别，让屏幕方向适应你与手机的相对姿势。
 
@@ -50,9 +50,11 @@
 
 ## 可选：AON暗光增益实验补丁
 
-发布页另提供 `n6-aon-lowlight-experimental-v0.1.zip`，供已Root、配置匹配的Find N6单独试用。**APK的旋转功能不依赖这个ZIP。**
+发布页另提供 [暗光补丁 v0.2](https://github.com/FZ997616100/n6-face-rotation/releases/download/v0.4.12-r1/n6-aon-lowlight-experimental-v0.2.zip)，供已Root、配置匹配的Find N6单独试用。**APK的旋转功能不依赖这个ZIP。**
 
 补丁将AON自动曝光曲线增加到32倍增益档，保留200毫秒曝光上限和5fps。ZIP不包含厂商配置文件；安装时在本机生成覆盖副本，并用两个原文件哈希限制适配范围。它会影响共享AON通道，不受APK所选应用范围限制；安装、停用或卸载后均需重启。
+
+已安装 v0.1 时，可以直接在 ReSukiSU 中覆盖安装 v0.2，然后重启。若遇到未知或混合配置，安装器会停止并显示两份实际校验值。
 
 已经验证32倍档参与寄存器编程，但没有同场景16倍/32倍有效对照，不能保证暗光识别率提升。源码、构建方法和恢复说明见 [实验补丁说明](experimental/aon-lowlight/README.md)。
 
@@ -78,7 +80,7 @@ python module/build.py
 
 ## 验证范围
 
-**0.4.12为预发布版本：已完成本地生产代码回归、构建、签名及对齐检查；手机未连接，三档等待和移除启动前延迟尚未实机验证。** 本地测试执行生产hook与请求流程，Android调度、Binder和屏幕应用由夹具模拟，不能替代真实响应速度、暗光识别率或耗电测量。
+**0.4.12 已正式发布。** APK 的 771 项本地回归以及构建、签名和对齐检查已通过，三档等待的实机响应尚待验证。可选补丁 v0.2 的安装脚本通过 16 项本地检查。 本地测试执行生产hook与请求流程，Android调度、Binder和屏幕应用由夹具模拟，不能替代真实响应速度、暗光识别率或耗电测量。
 
 此前0.4.11已在Find N6上验证实际任务栏推荐旋转按钮点击，系统关闭自动旋转时也能执行手动方向；接口回归覆盖无脸保持及后续人脸重新接管。0.4.12保留这些规则并进行本地回归，但不把旧版本实测当作新版实测。
 
